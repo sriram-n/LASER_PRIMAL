@@ -15,8 +15,9 @@ program main
       implicit none
       character(len=1024) :: argv
       real*8  :: err,rnorm,rvoid,factor
-      integer :: mdle,i,kref,idec,nvoid,niter,ibeg,iend,nreflag,istep,nrdof_old,nrdof_new,nstop,idec_solve
-      integer, dimension(2) :: flag
+      integer :: mdle,i,kref,idec,nvoid,niter,ibeg,iend,nreflag,istep,nrdof_old,nrdof_new,nstop,idec_solve,t
+      integer :: iref,numRef,itag
+      integer, dimension(2) :: flag,iflag
 !
 !----------------------------------------------------------------------
 !
@@ -41,16 +42,18 @@ program main
       call get_option_int(    '-orderx'             , 'NPX'                       , 0                  , NPX         )
       call get_option_int(    '-ordery'             , 'NPY'                       , 0                  , NPY         )
       call get_option_int(    '-orderz'             , 'NPZ'                       , 0                  , NPZ         )
-      call get_option_int(    '-isol'               , 'ISOL'                      , 1                  , ISOL        )
-      call get_option_int(    '-comp'               , 'ICOMP_EXACT'               , 1                  , ICOMP_EXACT )
+      call get_option_int(    '-isol'               , 'ISOL'                      , 6                  , ISOL        )
+      call get_option_int(    '-comp'               , 'ICOMP_EXACT'               , 2                  , ICOMP_EXACT )
 !
       call get_option_int(    '-inner-product'      , 'INNER_PRODUCT'             , 1                  , INNER_PRODUCT)
       call get_option_real(   '-mu'                 , 'MU'                        , 1.d0               , MU          )
       call get_option_real(   '-epsilon'            , 'EPSILON'                   , 1.d0               , EPSILON     )
       call get_option_real(   '-sigma'              , 'SIGMA'                     , 0.d0               , SIGMA       )
       call get_option_real(   '-omega'              , 'OMEGA'                     , 1.d0               , OMEGA       )
+      !call get_option_real(   '-omega'              , 'OMEGA'                     , 2.d0*PI               , OMEGA       )
        call get_option_int(    '-ibc'               , 'IBCFlag'                   , 0                  , IBCFlag     )
-      GAMMA_IMP = dsqrt(1.d0-(PI**2/OMEGA**2))
+      GAMMA_IMP = 1.d0
+      !GAMMA_IMP = dsqrt(1.d0-(PI**2/OMEGA**2))
 
 !
 !  ...finalize
@@ -103,6 +106,7 @@ program main
       write(*,*) 'Compute residual .....................110'
       write(*,*) 'Adaptive DPG refinements .............120'
       write(*,*) 'Compute BC data interpolation error...130'
+      write(*,*) 'Rate tests ...........................140'
       write(*,*) '                                         '
       write(*,*) 'My tests..... ........................200'
       write(*,*) 'My own tests..... ....................210'
@@ -182,7 +186,8 @@ program main
 !
 !     MUMPS solve
       case(50)
-        call mumps_solve_seq(MY_NR_RHS)
+        call mumps_interf(MY_NR_RHS)
+        !call mumps_solve_seq(MY_NR_RHS)
 !
 !     UHM solve
       case(60)
@@ -195,7 +200,8 @@ program main
         call compute_error(flag,1)
 !
 !  ...compute residual
-      case(110) ; !!!!!call compute_residual
+      case(110)
+        call compute_residual
 !
 !  ...adaptive DPG refinements
       case(120)
@@ -224,6 +230,41 @@ program main
       case(130)
         !!!!call compute_BC_interp_error
 !
+
+
+! ......... rate test for single step of Heat problem
+        case(140)
+        write(*,*) 'Testing h-convergence rates'
+        write(*,*) 'Enter number of uniform H-refinements:'
+        read(*,*) numRef
+          iref = 0
+          do while(iref.lt.numRef)
+!  ........ Solve the problem
+!            call solve1(MY_NR_RHS)
+             !call mumps_interf(MY_NR_RHS)
+            call uhm_time_in
+            call mumps_sc_3D
+            !call mumps_solve_seq(MY_NR_RHS)
+!  ........ Set error flags
+            iflag(1) = 1; iflag(2) = 0; itag=1
+!  ........ Compute error
+            call compute_error(iflag,itag)
+            call compute_residual
+            call uhm_time_out(t)
+!  ......... Compute residual
+            !call compute_residual
+!  ........ Do uniform h-refinements
+            call global_href
+            call close_mesh
+            call update_gdof
+            call update_Ddof
+            iref = iref+1
+          enddo
+
+
+
+
+
       case(200) ; call my_tests
 !
       case(210) ; call my_own_tests

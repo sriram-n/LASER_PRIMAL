@@ -114,6 +114,7 @@
   VTYPE, dimension(MdF),       intent(out) :: ZblocF
   VTYPE, dimension(MdF,MdE),   intent(out) :: ZalocFE
   VTYPE, dimension(MdF,MdF),   intent(out) :: ZalocFF
+
 !
 !.......declare edge/face type varibles
   character(len=4) :: etype,ftype
@@ -167,6 +168,8 @@
 !  VTYPE, dimension(MAXtestE,MAXbrickQ*6) :: STIFFEQ
   VTYPE, dimension(MAXtestE,MAXbrickE) :: STIFFEE
   VTYPE, dimension(MAXtestE,MAXbrickE) :: STIFFEF
+  ! for IBC hack
+  VTYPE, dimension(MdF,MdF) :: ZalocF1F1
 !  ....STIFF_ALL for alternative computation of stiffness
   VTYPE, dimension(MAXtestE,2*MAXbrickE+1) :: STIFF_ALLE
 #if C_MODE
@@ -208,7 +211,7 @@
   real*8  :: h_elem,rjac,weight,wa,v2n,CC,EE,CE,E,EC,q,h,omeg,alpha_scale
   real*8  :: bjac,impedanceConstant
   integer :: i1,i2,j1,j2,k1,k2,kH,kk,i,j,nrTEST,nint,iflag,kE,k,iprint,l
-  integer :: N,nRHS,nordP,nsign,if,ndom,info,icomp,nrdof_eig,idec
+  integer :: N,nRHS,nordP,nsign,if,ndom,info,info1,info2,info3,icomp,nrdof_eig,idec
   VTYPE   :: zfval,za,zb,zc,zk2
 ! ...for lapack eigensolve
   complex*16, allocatable :: Z(:,:), WORK(:)
@@ -223,7 +226,7 @@
 !---------------------------------------------------------------------
 !
       iprint=0
-      write(*,*) 'elem: Mdle = ',Mdle
+      !write(*,*) 'elem: Mdle = ',Mdle
 !
 !  ...element type
       etype = NODES(Mdle)%type
@@ -267,9 +270,10 @@
 !  ...clear space for stiffness matrix and rhsv:
       ZblocE = ZERO; ZblocF = ZERO
       ZalocEE = ZERO; ZalocEF = ZERO; ZalocFE = ZERO; ZalocFF = ZERO
+      ZalocF1F1 = ZERO
 !
 !  ...clear space for auxiliary matrices
-      BLOADE = ZERO; STIFFEE = ZERO; STIFFEF = ZERO; AP = ZERO
+      BLOADE = ZERO; STIFFEE = ZERO; STIFFEF = ZERO; AP_Maxwell = ZERO
       STIFF_ALLE = ZERO
 !
 !  ...complex wave number
@@ -362,6 +366,23 @@
            enddo
         enddo
       enddo
+
+         ! uplo = 'U'
+         ! call ZPPTRF(uplo, nrdofEE, AP_Maxwell, info)
+         ! if (info.ne.0) then
+         ! write(*,*) 'elem_primalMaxwell: info = ',info
+         ! write(*,*) 'elem_primalMaxwell: AP_Maxwell first pass '
+         ! stop
+         ! endif
+
+         !  uplo = 'U'
+         !  call ZPPTRF(uplo, nrdofEE, AP_Maxwell, info)
+         !  if (info.ne.0) then
+         !    write(*,*) 'elem_primalMaxwell: info = ',info
+         !    write(*,*) 'elem_primalMaxwell: AP_Maxwell second pass '
+         !  stop
+         !  endif
+         iprint = 0
       if (iprint.eq.1) then
         write(*,*) 'elem_primalMaxwell: AP_Maxwell = '
         do i=1,10
@@ -375,7 +396,18 @@
         enddo
         call pause
       endif
+      iprint = 0
+         !       iprint = 0
+         !       uplo = 'U'
+         ! call ZPPTRF(uplo, nrdofEE, AP_Maxwell, info)
+         ! if (info.ne.0) then
+         ! write(*,*) 'elem_primalMaxwell: info = ',info
+         ! write(*,*) 'elem_primalMaxwell: AP_Maxwell first pass '
+         ! stop
+         ! endif
+
 !
+
 !-----------------------------------------------------------------------
 !
 !  ...boundary integrals
@@ -438,8 +470,8 @@
                      + shapEE(3,k1)*dxidx(3,1:3)
 !
 ! ...........accumulate for the load vector
-      k = k1
-      BLOADE(k) = BLOADE(k) &
+      !k = k1
+      BLOADE(k1) = BLOADE(k1) &
           + ZI*OMEGA*MU*(zImp(1)*qq(1)+zImp(2)*qq(2)+zImp(3)*qq(3))*weight
 !
 ! ...........loop through Hcurl trial functions
@@ -457,7 +489,12 @@
               STIFFEE(k1,k2) = STIFFEE(k1,k2) &
         - ZI*OMEGA*MU*(GAMMA_IMP)*(qq(1)*rn2timesp(1)+qq(2)*rn2timesp(2) &
                                +qq(3)*rn2timesp(3))*weight
-
+!
+! ...............hack to avoid singular ZalocFF by using ZalocF1F1 and adding at end
+              ZalocF1F1(k2,k2) =  ZalocF1F1(k2,k2) + 1.d0 !&
+                      !(rntimesp(1)**2+rntimesp(2)**2+rntimesp(3)**2)*weight
+! ...............end hack to avoid singular ZalocFF by using ZalocF1F1 and adding at end
+!
 ! ...........end loop through Hcurl trial functions
         enddo
 ! ...........end loop through Hcurl enriched test functions
@@ -492,6 +529,9 @@
 !......end loop through faces
   enddo
 !
+
+
+
 !-----------------------------------------------------------------------
 !! ....................................................................
 !! ...  construction of DPG system
@@ -571,9 +611,10 @@
 
 ! ...factorize the test stiffness matrix
   uplo = 'U'
-  call ZPPTRF(uplo, nrTEST, AP_Maxwell, info)
+  call ZPPTRF(uplo, nrdofEE, AP_Maxwell, info)
   if (info.ne.0) then
     write(*,*) 'elem_primalMaxwell: info = ',info
+    write(*,*) 'elem_primalMaxwell: AP_Maxwell third pass '
     stop
   endif
   call ZTPTRS(uplo,trans,diag,N,NRHS,AP_Maxwell,STIFF_ALLE, &
@@ -596,7 +637,10 @@
   ZalocEF(1:j1,1:j2) = STIFF_ALLE(1:j1,j1+1:j1+j2)
 !
   ZalocFE(1:j2,1:j1) = STIFF_ALLE(j1+1:j1+j2,1:j1)
-  ZalocFF(1:j2,1:j2) = STIFF_ALLE(j1+1:j1+j2,j1+1:j1+j2)
+!
+! .......hack to avoid singular ZalocFF by using ZalocF1F1 and adding at end
+  ZalocFF(1:j2,1:j2) = STIFF_ALLE(j1+1:j1+j2,j1+1:j1+j2) + ZalocF1F1(1:j2,1:j2)
+! .......end hack to avoid singular ZalocFF by using ZalocF1F1 and adding at end
 !
 
 !   if (idec.ne.2) then
@@ -644,7 +688,148 @@
     enddo
     call pause
     endif
-!
+
+
+
+
+
+
+
+! !-----------------------------------------------------------------------
+! !
+! !  ...factorize the test stiffness matrix
+!       uplo = 'U'
+!       call ZPPTRF(uplo, nrdofEE, AP_Maxwell, info)
+!       if (info.ne.0) then
+!         write(*,*) 'elem_dpgHcurl: info = ',info
+!         stop
+!       endif
+! !
+! !  ...save copies of enriched stiffness matrices
+!       STIFFEEc =STIFFEE; STIFFEFc =  STIFFEF
+! !
+! !  ...compute the products of inverted test matrix with RHS
+! !     and enriched stiffness matrices
+!       call ZPPTRS(uplo, nrdofEE, 1, AP_Maxwell, BLOADE, MAXbrickEE, info1 )
+!       if (info1.ne.0) then
+!         write(*,*) 'elem_dpgHcurl: info1 = ',info1
+!         stop
+!       endif
+!       call ZPPTRS(uplo,nrdofEE,nrdofE,AP_Maxwell,STIFFEEc,MAXbrickEE,info2)
+!       if (info2.ne.0) then
+!         write(*,*) 'elem_dpgHcurl: info2 = ',info2
+!         stop
+!       endif
+!       call ZPPTRS(uplo,nrdofEE,nrdofE,AP_Maxwell,STIFFEFc,MAXbrickEE,info3)
+!       if (info3.ne.0) then
+!         write(*,*) 'elem_dpgHcurl: info3 = ',info3
+!         stop
+!       endif
+! !
+! !  ...compute the ultimate DPG load vectors and stiffness matrices
+!       do k1=1,nrdofE
+!         do k=1,nrdofEE
+!           ZblocE(k1) = ZblocE(k1) + BLOADE(k)*conjg(STIFFEE(k,k1))
+!         enddo
+!         do k2=1,nrdofE
+!           do k=1,nrdofEE
+!             ZalocEE(k1,k2) = ZalocEE(k1,k2) &
+!                           + STIFFEEc(k,k1)*conjg(STIFFEE(k,k2))
+!           enddo
+!         enddo
+!         do k2=1,nrdofE
+!           do k=1,nrdofEE
+!             ZalocEF(k1,k2) = ZalocEF(k1,k2) &
+!                           + STIFFEEc(k,k1)*conjg(STIFFEF(k,k2))
+!           enddo
+!         enddo
+!       enddo
+!       do k1=1,nrdofE
+!         do k=1,nrdofEE
+!           ZblocF(k1) = ZblocF(k1) + BLOADE(k)*conjg(STIFFEF(k,k1))
+!         enddo
+!         do k2=1,nrdofE
+!           do k=1,nrdofEE
+!             ZalocFE(k1,k2) = ZalocFE(k1,k2) &
+!                           + STIFFEFc(k,k1)*conjg(STIFFEE(k,k2))
+!           enddo
+!         enddo
+!         do k2=1,nrdofE
+!           do k=1,nrdofEE
+!             ZalocFF(k1,k2) = ZalocFF(k1,k2) &
+!                           + STIFFEFc(k,k1)*conjg(STIFFEF(k,k2))
+!           enddo
+!         enddo
+!       enddo
+! !
+! ! !  ...check symmetry
+! !       diffmax = ZERO; dmax = ZERO
+! !       do k1=1,nrdofE
+! !         do k2=k1,nrdofE
+! !           diffmax = max(diffmax,
+! !      .              abs(ZalocEE(k1,k2)-conjg(ZalocEE(k2,k1))))
+! !           dmax = max(dmax,abs(ZalocEE(k1,k2)))
+! !         enddo
+! !       enddo
+! !       symmetry_tol = 1.d-9
+! !       if (diffmax/dmax.gt.symmetry_tol) then
+! !         write(*,7021) diffmax, dmax
+! !  7021   format('elem_dpgHcurl: diffmax,dmax FOR ZalocEE = ',2e12.5)
+! !         call pause
+! !       endif
+! !       diffmax = ZERO; dmax = ZERO
+! !       do k1=1,nrdofE
+! !         do k2=k1,nrdofE
+! !           diffmax = max(diffmax,
+! !      .                  abs(ZalocFF(k1,k2)-conjg(ZalocFF(k2,k1))))
+! !           dmax = max(dmax,abs(ZalocFF(k1,k2)))
+! !         enddo
+! !       enddo
+! !       if (diffmax/dmax.gt.symmetry_tol) then
+! !         write(*,7022) diffmax, dmax
+! !  7022   format('elem_dpgHcurl: diffmax,dmax FOR ZalocFF = ',2e12.5)
+! !         call pause
+! !       endif
+! !       diffmax = ZERO; dmax = ZERO
+! !       do k1=1,nrdofE
+! !         do k2=1,nrdofv
+! !           diffmax = max(diffmax,
+! !      .                  abs(ZalocEF(k1,k2)-conjg(ZalocFE(k2,k1))))
+! !           dmax = max(dmax,abs(ZalocEF(k1,k2)))
+! !         enddo
+! !       enddo
+! !       if (diffmax/dmax.gt.symmetry_tol) then
+! !         write(*,7023) diffmax, dmax
+! !  7023   format('elem_dpgHcurl: diffmax,dmax FOR ZalocEF = ',2e12.5)
+! !         call pause
+! !       endif
+! ! !
+! ! !
+!       if (iprint.ge.1) then
+!         write(*,7010)
+!  7010   format('elem_dpgHcurl: ZblocE,ZblocF = ')
+!         write(*,7011) ZblocE(1:NrdofE)
+!         write(*,7011) ZblocF(1:NrdofE)
+!  7011   format(10e12.5)
+!         write(*,7012)
+!  7012   format('elem_dpgHcurl: ZalocEE = ')
+!         do i=1,NrdofE
+!           write(*,7013) i,ZalocEE(i,1:NrdofE)
+!  7013     format('i = ',i3,10(/,5(2e12.5,2x)))
+!         enddo
+!         write(*,7014)
+!  7014   format('elem_dpgHcurl: ZalocEF = ')
+!         do i=1,NrdofE
+!           write(*,7013) i,ZalocEF(i,1:NrdofE)
+!         enddo
+!         write(*,7015)
+!  7015   format('elem_dpgHcurl: ZalocFF = ')
+!         do i=1,NrdofE
+!           write(*,7013) i,ZalocFF(i,1:NrdofE)
+!         enddo
+!         call pause
+!       endif
+
       end subroutine elem_primalMaxwell
 
 

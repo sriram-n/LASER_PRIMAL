@@ -3,6 +3,7 @@ SRC_FILE    = \
 	    problem.F90 \
             dirichlet.F90 \
             elem.F90 \
+            elem_residual.F90 \
 	    exact.F90 \
 	    fake.F90 \
 	    finalize.F90 \

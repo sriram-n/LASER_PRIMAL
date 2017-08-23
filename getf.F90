@@ -181,6 +181,7 @@ subroutine get_bdSource(Mdle,X,Rn, Imp_val)
           call my_cross_product(Rn,curlE, rntimescurlE)
 !
           Imp_val = rntimescurlE/(-ZI*OMEGA*MU) -(GAMMA_IMP)*rn2timesE
+          write(*,*) 'Imp_val is ', Imp_val
 !
         case default
           !write(*,*) 'get_bdSource: IBCFlag = ',IBCFlag;stop
